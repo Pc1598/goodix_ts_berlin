@@ -51,14 +51,40 @@ struct gesture_module {
 static struct gesture_module *gsx_gesture; /*allocated in gesture init module*/
 static bool module_initialized;
 
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 start */
+int goodix_gesture_enable(int enable)
+{
+	int ret = 0;
+	if (!module_initialized)
+		return 0;
+	ts_info("enable is %d", enable);
+	if (enable) {
+		if (atomic_read(&gsx_gesture->registered))
+			ts_info("gesture module has been already registered");
+		else
+			ret = goodix_register_ext_module_no_wait(&gsx_gesture->module);
+	} else {
+		if (!atomic_read(&gsx_gesture->registered))
+			ts_info("gesture module has been already unregistered");
+		else
+			ret = goodix_unregister_ext_module(&gsx_gesture->module);
+	}
+	return ret;
+}
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 end */
+
 static ssize_t gsx_double_type_show(struct goodix_ext_module *module,
 		char *buf)
 {
 	struct gesture_module *gsx = module->priv_data;
-	unsigned char type = gsx->ts_core->gesture_type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 start */
+	u32 type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 end */
 
 	if (!gsx)
 		return -EIO;
+
+	type = gsx->ts_core->gesture_type;
 
 	if (atomic_read(&gsx->registered) == 0) {
 		ts_err("gesture module is not registered");
@@ -98,10 +124,14 @@ static ssize_t gsx_single_type_show(struct goodix_ext_module *module,
 		char *buf)
 {
 	struct gesture_module *gsx = module->priv_data;
-	unsigned char type = gsx->ts_core->gesture_type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 start */
+	u32 type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 end */
 
 	if (!gsx)
 		return -EIO;
+
+	type = gsx->ts_core->gesture_type;
 
 	if (atomic_read(&gsx->registered) == 0) {
 		ts_err("gesture module is not registered");
@@ -141,10 +171,14 @@ static ssize_t gsx_fod_type_show(struct goodix_ext_module *module,
 		char *buf)
 {
 	struct gesture_module *gsx = module->priv_data;
-	unsigned char type = gsx->ts_core->gesture_type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 start */
+	u32 type;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 end */
 
 	if (!gsx)
 		return -EIO;
+
+	type = gsx->ts_core->gesture_type;
 
 	if (atomic_read(&gsx->registered) == 0) {
 		ts_err("gesture module is not registered");
@@ -258,11 +292,13 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 	case GOODIX_GESTURE_SINGLE_TAP:
 		if (cd->gesture_type & GESTURE_SINGLE_TAP) {
 			ts_info("get SINGLE-TAP gesture");
-			input_report_key(cd->input_dev, KEY_WAKEUP, 1);
-			// input_report_key(cd->input_dev, KEY_GOTO, 1);
+/* N17 code for HQ-290808 by jiangyue at 2023/6/19 start */
+			//input_report_key(cd->input_dev, KEY_WAKEUP, 1);
+			input_report_key(cd->input_dev, KEY_GOTO, 1);
 			input_sync(cd->input_dev);
-			input_report_key(cd->input_dev, KEY_WAKEUP, 0);
-			// input_report_key(cd->input_dev, KEY_GOTO, 0);
+			//input_report_key(cd->input_dev, KEY_WAKEUP, 0);
+			input_report_key(cd->input_dev, KEY_GOTO, 0);
+/* N17 code for HQ-290808 by jiangyue at 2023/6/19 end */
 			input_sync(cd->input_dev);
 		} else {
 			ts_debug("not enable SINGLE-TAP");
@@ -271,9 +307,11 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 	case GOODIX_GESTURE_DOUBLE_TAP:
 		if (cd->gesture_type & GESTURE_DOUBLE_TAP) {
 			ts_info("get DOUBLE-TAP gesture");
-			input_report_key(cd->input_dev, KEY_WAKEUP, 1);
+/*N17 code for HQ-299273 by jiangyue at 2023/7/13 start*/
+			input_report_key(cd->input_dev, KEY_POWER, 1);
 			input_sync(cd->input_dev);
-			input_report_key(cd->input_dev, KEY_WAKEUP, 0);
+			input_report_key(cd->input_dev, KEY_POWER, 0);
+/*N17 code for HQ-299273 by jiangyue at 2023/7/13 end*/
 			input_sync(cd->input_dev);
 		} else {
 			ts_debug("not enable DOUBLE-TAP");
@@ -316,6 +354,8 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 		ts_err("not support gesture type[%02X]", gs_event.gesture_type);
 		break;
 	}
+
+	return EVT_CANCEL_IRQEVT;
 
 re_send_ges_cmd:
 	if (hw_ops->gesture(cd, 0))
@@ -365,6 +405,25 @@ static int gsx_gesture_before_resume(struct goodix_ts_core *cd,
 
 	return EVT_CANCEL_RESUME;
 }
+
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 start */
+#define	WAKEUP_OFF	0x04
+#define	WAKEUP_ON	0x05
+int gsx_gesture_switch(struct input_dev *dev, unsigned int type, unsigned int code, int value)
+{
+	if (type == EV_SYN && code == SYN_CONFIG) {
+		if (value == WAKEUP_OFF) {
+			gsx_gesture->ts_core->gesture_type &= ~GESTURE_DOUBLE_TAP;
+			ts_info("gsx_gesture disabled !");
+		} else if (value == WAKEUP_ON) {
+			gsx_gesture->ts_core->gesture_type |= GESTURE_DOUBLE_TAP;
+			ts_info("gsx_gesture enabled !");
+		}
+	}
+
+	return EVT_CANCEL_RESUME;
+}
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 end */
 
 static struct goodix_ext_module_funcs gsx_gesture_funcs = {
 	.irq_event = gsx_gesture_ist,

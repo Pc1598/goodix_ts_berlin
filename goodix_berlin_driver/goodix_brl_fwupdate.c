@@ -50,9 +50,6 @@
 #define CONFIG_DATA_ADDR_BRA			0x3E000
 #define CONFIG_DATA_ADDR_BRB			0x40000
 #define CONFIG_DATA_ADDR_BRD			0x3E000
-#define GOODIX_CFG_ID_ADDR_BRA			0x1006E
-#define GOODIX_CFG_ID_ADDR_BRB			0x10076
-#define GOODIX_CFG_ID_ADDR_BRD			0x10076
 
 #define HOLD_CPU_REG_W					0x0002
 #define HOLD_CPU_REG_R					0x2000
@@ -92,7 +89,6 @@ struct update_info_t {
 	u32 config_data_reg;
 	u32 misctl_reg;
 	u32 watch_dog_reg;
-	u32 config_id_reg;
 	u32 enable_misctl_val;
 };
 
@@ -106,7 +102,6 @@ struct update_info_t update_bra = {
 	CONFIG_DATA_ADDR_BRA,
 	MISCTL_REG_BRA,
 	WATCH_DOG_REG_BRA,
-	GOODIX_CFG_ID_ADDR_BRA,
 	ENABLE_MISCTL_BRA,
 };
 
@@ -120,7 +115,6 @@ struct update_info_t update_brb = {
 	CONFIG_DATA_ADDR_BRB,
 	MISCTL_REG_BRB,
 	WATCH_DOG_REG_BRB,
-	GOODIX_CFG_ID_ADDR_BRB,
 	ENABLE_MISCTL_BRB,
 };
 
@@ -134,7 +128,6 @@ struct update_info_t update_brd = {
 	CONFIG_DATA_ADDR_BRD,
 	MISCTL_REG_BRD,
 	WATCH_DOG_REG_BRD,
-	GOODIX_CFG_ID_ADDR_BRD,
 	ENABLE_MISCTL_BRD,
 };
 
@@ -440,33 +433,29 @@ err_size:
 static int goodix_fw_version_compare(struct fw_update_ctrl *fwu_ctrl)
 {
 	int ret = 0;
-	struct goodix_fw_version fw_version;
+	struct goodix_ts_core *cd = fwu_ctrl->core_data;
+	struct goodix_fw_version *ic_ver = &cd->fw_version;
+	struct goodix_ic_info *ic_info = &cd->ic_info;
 	struct firmware_summary *fw_summary = &fwu_ctrl->fw_data.fw_summary;
-	u32 config_id_reg = goodix_fw_update_ctrl.update_info->config_id_reg;
 	u32 file_cfg_id;
-	u32 ic_cfg_id;
 
 	/* compare fw_version */
-	ret = get_fw_version_info(&fw_version);
-	if (ret)
-		return -EINVAL;
-
-	if (!memcmp(fw_version.rom_pid, GOODIX_NOCODE, 6) ||
-		!memcmp(fw_version.patch_pid, GOODIX_NOCODE, 6)) {
+	if (!memcmp(ic_ver->rom_pid, GOODIX_NOCODE, 6) ||
+		!memcmp(ic_ver->patch_pid, GOODIX_NOCODE, 6)) {
 		ts_info("there is no code in the chip");
 		return COMPARE_NOCODE;
 	}
 
-	if (memcmp(fw_version.patch_pid, fw_summary->fw_pid, FW_PID_LEN)) {
+	if (memcmp(ic_ver->patch_pid, fw_summary->fw_pid, FW_PID_LEN)) {
 		ts_err("Product ID mismatch:%s != %s",
-			fw_version.patch_pid, fw_summary->fw_pid);
+			ic_ver->patch_pid, fw_summary->fw_pid);
 		return COMPARE_PIDMISMATCH;
 	}
 
-	ret = memcmp(fw_version.patch_vid, fw_summary->fw_vid, FW_VID_LEN);
+	ret = memcmp(ic_ver->patch_vid, fw_summary->fw_vid, FW_VID_LEN);
 	if (ret) {
 		ts_info("active firmware version:%*ph", FW_VID_LEN,
-				fw_version.patch_vid);
+				ic_ver->patch_vid);
 		ts_info("firmware file version: %*ph", FW_VID_LEN,
 				fw_summary->fw_vid);
 		return COMPARE_FW_NOTEQUAL;
@@ -477,11 +466,9 @@ static int goodix_fw_version_compare(struct fw_update_ctrl *fwu_ctrl)
 	if (fwu_ctrl->ic_config && fwu_ctrl->ic_config->len > 0) {
 		file_cfg_id =
 			goodix_get_file_config_id(fwu_ctrl->ic_config->data);
-		goodix_reg_read(config_id_reg,
-			(u8 *)&ic_cfg_id, sizeof(ic_cfg_id));
-		if (ic_cfg_id != file_cfg_id) {
+		if (ic_info->version.config_id != file_cfg_id) {
 			ts_info("ic_cfg_id:0x%x != file_cfg_id:0x%x",
-				ic_cfg_id, file_cfg_id);
+				ic_info->version.config_id, file_cfg_id);
 			return COMPARE_CFG_NOTEQUAL;
 		}
 		ts_info("config_id equal");
@@ -920,15 +907,29 @@ exit_flash:
  */
 static int goodix_update_finish(struct fw_update_ctrl *fwu_ctrl)
 {
+	struct goodix_ts_core *cd = fwu_ctrl->core_data;
 	int ret;
 
-	if (goodix_fw_update_reset(100))
-		ts_err("reset abnormal");
+	/* step 1: reset IC */
+	goodix_fw_update_reset(100);
+	/* step 2: read version */
+	ret = get_fw_version_info(&cd->fw_version);
+	if (ret < 0) {
+		ts_err("still failed to read version after upgraded");
+		return -EFAULT;
+	}
+	/* step 3: read ic info */
+	ret = cd->hw_ops->get_ic_info(cd, &cd->ic_info);
+	if (ret < 0) {
+		ts_err("still failed to read ic info after upgraded");
+		return -EFAULT;
+	}
+
 	ret = goodix_fw_version_compare(fwu_ctrl);
 	if (ret == COMPARE_EQUAL || ret == COMPARE_CFG_NOTEQUAL)
 		return 0;
 
-	return -EINVAL;
+	return -EFAULT;
 }
 
 /**

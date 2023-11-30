@@ -41,6 +41,19 @@
 #define GOODIX_IC_INFO_ADDR_BRA		0x10068
 #define GOODIX_IC_INFO_ADDR			0x10070
 
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 start */
+#define ORIENTATION_0_OR_180      0    /* anticlockwise 0 or 180 degrees */
+#define NORMAL_ORIENTATION_90     1    /* anticlockwise 90 degrees in normal */
+#define NORMAL_ORIENTATION_270    2    /* anticlockwise 270 degrees in normal */
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 start */
+
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 start */
+#define GOODIX_HDLE_MODE_CMD                0x29
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 end */
+
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+#include "../xiaomi/xiaomi_touch.h"
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
 
 enum brl_request_code {
 	BRL_REQUEST_CODE_CONFIG = 0x01,
@@ -81,6 +94,7 @@ static int brl_dev_confirm(struct goodix_ts_core *cd)
 	u8 rx_buf[8] = {0};
 
 	memset(tx_buf, DEV_CONFIRM_VAL, sizeof(tx_buf));
+
 	while (retry--) {
 		ret = hw_ops->write(cd, BOOTOPTION_ADDR,
 			tx_buf, sizeof(tx_buf));
@@ -230,6 +244,7 @@ static int brl_power_on(struct goodix_ts_core *cd, bool on)
 				goto power_off;
 			}
 		}
+
 		usleep_range(15000, 15100);
 		gpio_direction_output(reset_gpio, 1);
 		usleep_range(4000, 4100);
@@ -274,14 +289,18 @@ int brl_resume(struct goodix_ts_core *cd)
 #define GOODIX_GESTURE_CMD		0xA6
 int brl_gesture(struct goodix_ts_core *cd, int gesture_type)
 {
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 start */
 	struct goodix_ts_cmd cmd;
+	u32 type = ~(cd->gesture_type);
 
 	if (cd->bus->ic_type == IC_TYPE_BERLIN_A)
 		cmd.cmd = GOODIX_GESTURE_CMD_BA;
 	else
 		cmd.cmd = GOODIX_GESTURE_CMD;
-	cmd.len = 5;
-	cmd.data[0] = gesture_type;
+	cmd.len = 6;
+	cmd.data[0] = type & 0xFF;
+	cmd.data[1] = (type >> 8) & 0xFF;
+/* N17 code for HQ-291091 by jiangyue at 2023/6/2 end */
 	if (cd->hw_ops->send_cmd(cd, &cmd))
 		ts_err("failed send gesture cmd");
 
@@ -795,13 +814,15 @@ static int brl_read_version(struct goodix_ts_core *cd,
 
 #define LE16_TO_CPU(x)  (x = le16_to_cpu(x))
 #define LE32_TO_CPU(x)  (x = le32_to_cpu(x))
-static int convert_ic_info(struct goodix_ic_info *info, const u8 *data)
+static int convert_ic_info(struct goodix_ts_core *cd, const u8 *data)
 {
 	int i;
+	struct goodix_ic_info *info = &cd->ic_info;
 	struct goodix_ic_info_version *version = &info->version;
 	struct goodix_ic_info_feature *feature = &info->feature;
 	struct goodix_ic_info_param *parm = &info->parm;
 	struct goodix_ic_info_misc *misc = &info->misc;
+	struct goodix_ic_info_other *other = &info->other;
 
 	info->length = le16_to_cpup((__le16 *)data);
 
@@ -912,7 +933,7 @@ static int convert_ic_info(struct goodix_ic_info *info, const u8 *data)
 	LE32_TO_CPU(misc->iq_rawdata_addr);
 	LE32_TO_CPU(misc->iq_refdata_addr);
 	LE32_TO_CPU(misc->im_rawdata_addr);
-	LE16_TO_CPU(misc->im_readata_len);
+	LE16_TO_CPU(misc->im_rawdata_len);
 	LE32_TO_CPU(misc->noise_rawdata_addr);
 	LE16_TO_CPU(misc->noise_rawdata_len);
 	LE32_TO_CPU(misc->stylus_rawdata_addr);
@@ -920,79 +941,206 @@ static int convert_ic_info(struct goodix_ic_info *info, const u8 *data)
 	LE32_TO_CPU(misc->noise_data_addr);
 	LE32_TO_CPU(misc->esd_addr);
 
+	data += sizeof(*misc);
+	memcpy((u8 *)other, data, sizeof(*other));
+
 	return 0;
 }
 
-static void print_ic_info(struct goodix_ic_info *ic_info)
+/*N17 code for HQ-296911 by jiangyue at 2023/5/24 start*/
+#if 0
+static void goodix_compatible_ic_info(struct goodix_ts_core *cd)
 {
-	struct goodix_ic_info_version *version = &ic_info->version;
-	struct goodix_ic_info_feature *feature = &ic_info->feature;
-	struct goodix_ic_info_param *parm = &ic_info->parm;
-	struct goodix_ic_info_misc *misc = &ic_info->misc;
+	struct goodix_ic_info_v2 *info_v2 = &cd->ic_info_v2;
+	struct goodix_ic_info *info = &cd->ic_info;
+	int i;
 
-	ts_info("ic_info_length:                %d",
-		ic_info->length);
-	ts_info("info_customer_id:              0x%01X",
-		version->info_customer_id);
-	ts_info("info_version_id:               0x%01X",
-		version->info_version_id);
-	ts_info("ic_die_id:                     0x%01X",
-		version->ic_die_id);
-	ts_info("ic_version_id:                 0x%01X",
-		version->ic_version_id);
-	ts_info("config_id:                     0x%4X",
-		version->config_id);
-	ts_info("config_version:                0x%01X",
-		version->config_version);
-	ts_info("frame_data_customer_id:        0x%01X",
-		version->frame_data_customer_id);
-	ts_info("frame_data_version_id:         0x%01X",
-		version->frame_data_version_id);
-	ts_info("touch_data_customer_id:        0x%01X",
-		version->touch_data_customer_id);
-	ts_info("touch_data_version_id:         0x%01X",
-		version->touch_data_version_id);
+	info->length = info_v2->length;
+	info->version.info_customer_id = info_v2->info_customer_id;
+	info->version.info_version_id = info_v2->info_version_id;
+	info->version.ic_die_id = info_v2->version.ic_die_id;
+	info->version.ic_version_id = info_v2->version.ic_version_id;
+	info->version.config_id = info_v2->version.config_id;
+	info->version.config_version = info_v2->version.config_version;
+	info->version.frame_data_customer_id = info_v2->version.frame_data_customer_id;
+	info->version.frame_data_version_id = info_v2->version.frame_data_version_id;
+	info->version.touch_data_customer_id = info_v2->version.touch_data_customer_id;
+	info->version.touch_data_version_id = info_v2->version.touch_data_version_id;
 
-	ts_info("freqhop_feature:               0x%04X",
-		feature->freqhop_feature);
-	ts_info("calibration_feature:           0x%04X",
-		feature->calibration_feature);
-	ts_info("gesture_feature:               0x%04X",
-		feature->gesture_feature);
-	ts_info("side_touch_feature:            0x%04X",
-		feature->side_touch_feature);
-	ts_info("stylus_feature:                0x%04X",
-		feature->stylus_feature);
+	info->feature.freqhop_feature = info_v2->sample.freqhop_feature;
+	info->feature.calibration_feature = info_v2->sample.calibration_feature;
+	info->feature.gesture_feature = info_v2->sample.gesture_feature;
+	// info->feature.side_touch_feature = 0;
+	info->feature.stylus_feature = info_v2->sample.stylus_feature;
 
-	ts_info("Drv*Sen,Button,Force num:      %d x %d, %d, %d",
-		parm->drv_num, parm->sen_num,
-		parm->button_num, parm->force_num);
+	info->parm.drv_num = info_v2->sample.drv_num;
+	info->parm.sen_num = info_v2->sample.sen_num;
+	info->parm.button_num = info_v2->sample.button_num;
+	info->parm.force_num = info_v2->sample.force_num;
+	info->parm.active_scan_rate_num = info_v2->sample.active_scan_rate_num;
+	for (i = 0; i < info->parm.active_scan_rate_num; i++)
+		info->parm.active_scan_rate[i] = info_v2->sample.active_scan_rate[i];
+	info->parm.mutual_freq_num = info_v2->sample.mutual_freq_num;
+	for (i = 0; i < info->parm.mutual_freq_num; i++)
+		info->parm.mutual_freq[i] = info_v2->sample.mutual_freq[i];
+	info->parm.self_tx_freq_num = info_v2->sample.self_tx_freq_num;
+	for (i = 0; i < info->parm.self_tx_freq_num; i++)
+		info->parm.self_tx_freq[i] = info_v2->sample.self_tx_freq[i];
+	info->parm.self_rx_freq_num = info_v2->sample.self_rx_freq_num;
+	for (i = 0; i < info->parm.self_rx_freq_num; i++)
+		info->parm.self_rx_freq[i] = info_v2->sample.self_rx_freq[i];
+	info->parm.stylus_freq_num = info_v2->sample.stylus_freq_num;
+	for (i = 0; i < info->parm.stylus_freq_num; i++)
+		info->parm.stylus_freq[i] = info_v2->sample.stylus_freq[i];
 
-	ts_info("Cmd:                           0x%04X, %d",
-		misc->cmd_addr, misc->cmd_max_len);
-	ts_info("Cmd-Reply:                     0x%04X, %d",
-		misc->cmd_reply_addr, misc->cmd_reply_len);
-	ts_info("FW-State:                      0x%04X, %d",
-		misc->fw_state_addr, misc->fw_state_len);
-	ts_info("FW-Buffer:                     0x%04X, %d",
-		misc->fw_buffer_addr, misc->fw_buffer_max_len);
-	ts_info("Touch-Data:                    0x%04X, %d",
-		misc->touch_data_addr, misc->touch_data_head_len);
-	ts_info("point_struct_len:              %d",
-		misc->point_struct_len);
-	ts_info("mutual_rawdata_addr:           0x%04X",
-		misc->mutual_rawdata_addr);
-	ts_info("mutual_diffdata_addr:          0x%04X",
-		misc->mutual_diffdata_addr);
-	ts_info("self_rawdata_addr:             0x%04X",
-		misc->self_rawdata_addr);
-	ts_info("self_diffdata_addr:            0x%04X",
-		misc->self_diffdata_addr);
-	ts_info("stylus_rawdata_addr:           0x%04X, %d",
-		misc->stylus_rawdata_addr, misc->stylus_rawdata_len);
-	ts_info("esd_addr:                      0x%04X",
-		misc->esd_addr);
+	info->misc.cmd_addr = info_v2->address.cmd_addr;
+	info->misc.cmd_max_len = info_v2->address.cmd_max_len;
+	info->misc.cmd_reply_addr = info_v2->address.cmd_reply_addr;
+	info->misc.cmd_reply_len = info_v2->address.cmd_reply_len;
+	info->misc.fw_state_addr = info_v2->address.fw_state_addr;
+	info->misc.fw_state_len = info_v2->address.fw_state_len;
+	info->misc.fw_buffer_addr = info_v2->address.fw_buffer_addr;
+	info->misc.fw_buffer_max_len = info_v2->address.fw_buffer_max_len;
+	info->misc.frame_data_addr = info_v2->address.frame_data_addr;
+	info->misc.frame_data_head_len = info_v2->address.frame_data_head_len;
+	info->misc.fw_attr_len = info_v2->address.fw_attr_len;
+	info->misc.fw_log_len = info_v2->address.fw_log_len;
+	info->misc.pack_max_num = info_v2->address.pack_max_num;
+	info->misc.pack_compress_version = info_v2->address.pack_compress_version;
+	info->misc.stylus_struct_len = info_v2->address.stylus_struct_len;
+	info->misc.mutual_struct_len = info_v2->address.mutual_struct_len;
+	info->misc.self_struct_len = info_v2->address.self_struct_len;
+	info->misc.noise_struct_len = info_v2->address.noise_struct_len;
+	info->misc.touch_data_addr = info_v2->address.touch_data_addr;
+	info->misc.touch_data_head_len = info_v2->address.touch_data_head_len;
+	info->misc.point_struct_len = info_v2->address.point_struct_len;
+	info->misc.screen_real_max_x = info_v2->sample.screen_real_max_x;
+	info->misc.screen_real_max_y = info_v2->sample.screen_real_max_y;
+	info->misc.mutual_rawdata_addr = info_v2->address.mutual_rawdata_addr;
+	info->misc.mutual_diffdata_addr = info_v2->address.mutual_diffdata_addr;
+	info->misc.mutual_refdata_addr = info_v2->address.mutual_refdata_addr;
+	info->misc.self_rawdata_addr = info_v2->address.self_rawdata_addr;
+	info->misc.self_diffdata_addr = info_v2->address.self_diffdata_addr;
+	info->misc.self_refdata_addr = info_v2->address.self_refdata_addr;
+	info->misc.iq_rawdata_addr = info_v2->address.iq_rawdata_addr;
+	info->misc.iq_refdata_addr = info_v2->address.iq_refdata_addr;
+	info->misc.im_rawdata_addr = info_v2->address.im_rawdata_addr;
+	info->misc.im_rawdata_len = info_v2->address.im_rawdata_len;
+	info->misc.noise_rawdata_addr = info_v2->address.noise_rawdata_addr;
+	info->misc.noise_rawdata_len = info_v2->address.noise_rawdata_len;
+	info->misc.stylus_rawdata_addr = info_v2->address.stylus_rawdata_addr;
+	info->misc.stylus_rawdata_len = info_v2->address.stylus_rawdata_len;
+	info->misc.noise_data_addr = info_v2->address.noise_data_addr;
+	info->misc.esd_addr = info_v2->address.esd_addr;
+	info->misc.auto_scan_cmd_addr = info_v2->address.auto_scan_cmd_addr;
+	info->misc.auto_scan_info_addr = info_v2->address.auto_scan_info_addr;
+
+	info->other.normalize_k_version = info_v2->version.normalize_k_version;
+	info->other.irrigation_data_addr = info_v2->address.irrigation_data_addr;
+	info->other.algo_debug_data_addr = info_v2->address.algo_debug_data_addr;
+	info->other.algo_debug_data_len = info_v2->address.algo_debug_data_len;
+	info->other.update_sync_data_addr = info_v2->address.update_sync_data_addr;
+	info->other.screen_max_x = info_v2->sample.screen_max_x;
+	info->other.screen_max_y = info_v2->sample.screen_max_y;
 }
+
+static int convert_ic_info_v2(struct goodix_ts_core *cd, const u8 *data)
+{
+	struct goodix_ic_info_v2 *info_v2 = &cd->ic_info_v2;
+	int i;
+
+	info_v2->length = le16_to_cpup((__le16 *)data);
+	info_v2->info_customer_id = data[2];
+	info_v2->info_version_id = data[3];
+
+	// sub version
+	data += 4;
+	info_v2->version.length = le16_to_cpup((__le16 *)data);
+	/*N17 code for HQ-296326 by gaoxue at 2023/5/18 start*/
+	ts_info("lendth= %lu," , info_v2->version.length);
+	/*N17 code for HQ-296326 by gaoxue at 2023/5/18 end*/
+	memcpy((u8 *)&info_v2->version, data, info_v2->version.length);
+
+	// sub sample
+	data += info_v2->version.length;
+	info_v2->sample.length = le16_to_cpup((__le16 *)data);
+	memcpy((u8 *)&info_v2->sample, data, 16);
+
+	data += 16;
+	info_v2->sample.active_scan_rate_num = *data++;
+	if (info_v2->sample.active_scan_rate_num > MAX_SCAN_RATE_NUM) {
+		ts_err("invalid scan rate num %d > %d",
+			info_v2->sample.active_scan_rate_num, MAX_SCAN_RATE_NUM);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.active_scan_rate_num; i++)
+		info_v2->sample.active_scan_rate[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	data += info_v2->sample.active_scan_rate_num * 2;
+	info_v2->sample.mutual_freq_num = *data++;
+	if (info_v2->sample.mutual_freq_num > MAX_SCAN_FREQ_NUM) {
+		ts_err("invalid mntual freq num %d > %d",
+			info_v2->sample.mutual_freq_num, MAX_SCAN_FREQ_NUM);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.mutual_freq_num; i++)
+		info_v2->sample.mutual_freq[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	data += info_v2->sample.mutual_freq_num * 2;
+	info_v2->sample.self_tx_freq_num = *data++;
+	if (info_v2->sample.self_tx_freq_num > MAX_SCAN_FREQ_NUM) {
+		ts_err("invalid tx freq num %d > %d",
+			info_v2->sample.self_tx_freq_num, MAX_SCAN_FREQ_NUM);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.self_tx_freq_num; i++)
+		info_v2->sample.self_tx_freq[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	data += info_v2->sample.self_tx_freq_num * 2;
+	info_v2->sample.self_rx_freq_num = *data++;
+	if (info_v2->sample.self_rx_freq_num > MAX_SCAN_FREQ_NUM) {
+		ts_err("invalid rx freq num %d > %d",
+			info_v2->sample.self_rx_freq_num, MAX_SCAN_FREQ_NUM);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.self_rx_freq_num; i++)
+		info_v2->sample.self_rx_freq[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	data += info_v2->sample.self_rx_freq_num * 2;
+	info_v2->sample.stylus_freq_num = *data++;
+	if (info_v2->sample.stylus_freq_num > MAX_FREQ_NUM_STYLUS) {
+		ts_err("invalid stylus freq num %d > %d",
+			info_v2->sample.stylus_freq_num, MAX_FREQ_NUM_STYLUS);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.stylus_freq_num; i++)
+		info_v2->sample.stylus_freq[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	data += info_v2->sample.stylus_freq_num * 2;
+	info_v2->sample.stylus_tx2_freq_num = *data++;
+	if (info_v2->sample.stylus_tx2_freq_num > MAX_FREQ_NUM_STYLUS) {
+		ts_err("invalid stylus tx2 freq num %d > %d",
+			info_v2->sample.stylus_tx2_freq_num, MAX_FREQ_NUM_STYLUS);
+		return -EINVAL;
+	}
+	for (i = 0; i < info_v2->sample.stylus_tx2_freq_num; i++)
+		info_v2->sample.stylus_tx2_freq[i] = le16_to_cpup((__le16 *)(data + i * 2));
+
+	// sub address
+	data += info_v2->sample.stylus_tx2_freq_num * 2;
+	info_v2->address.length = le16_to_cpup((__le16 *)data);
+	memcpy((u8 *)&info_v2->address, data, info_v2->address.length);
+
+	// sub customer
+	data += info_v2->address.length;
+	info_v2->customer.length = le16_to_cpup((__le16 *)data);
+	memcpy((u8 *)&info_v2->customer, data, info_v2->customer.length);
+
+	goodix_compatible_ic_info(cd);
+	return 0;
+}
+#endif
+/*N17 code for HQ-296911 by jiangyue at 2023/5/24 end*/
 
 static int brl_get_ic_info(struct goodix_ts_core *cd,
 	struct goodix_ic_info *ic_info)
@@ -1048,13 +1196,13 @@ static int brl_get_ic_info(struct goodix_ts_core *cd,
 		return -EINVAL;
 	}
 
-	ret = convert_ic_info(ic_info, afe_data);
+	/*N17 code for HQ-296326 by jiangyue at 2023/5/23 start*/
+	ret = convert_ic_info(cd, afe_data);
+	/*N17 code for HQ-296326 by jiangyue at 2023/5/23 end*/
 	if (ret) {
 		ts_err("convert ic info encounter error");
 		return ret;
 	}
-
-	print_ic_info(ic_info);
 
 	/* check some key info */
 	if (!ic_info->misc.cmd_addr || !ic_info->misc.fw_buffer_addr ||
@@ -1106,6 +1254,9 @@ static int brl_esd_check(struct goodix_ts_core *cd)
 #define GOODIX_FP_EVENT				0x08
 #define POINT_TYPE_STYLUS_HOVER		0x01
 #define POINT_TYPE_STYLUS			0x03
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+#define GOODIX_LRAGETOUCH_EVENT		0x10
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
 
 static void goodix_parse_finger(struct goodix_touch_data *touch_data,
 				u8 *buf, int touch_num)
@@ -1281,6 +1432,9 @@ static int brl_event_handler(struct goodix_ts_core *cd,
 	int pre_read_len;
 	u8 pre_buf[32];
 	u8 event_status;
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+	u8 large_touch_status;
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
 	int ret;
 
 	memset(ts_event, 0, sizeof(*ts_event));
@@ -1305,10 +1459,13 @@ static int brl_event_handler(struct goodix_ts_core *cd,
 		return -EINVAL;
 	}
 
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+	large_touch_status = pre_buf[2];
 	event_status = pre_buf[0];
 	if (event_status & GOODIX_TOUCH_EVENT)
-		return goodix_touch_handler(cd, ts_event,
+		goodix_touch_handler(cd, ts_event,
 					    pre_buf, pre_read_len);
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
 
 	if (event_status & GOODIX_REQUEST_EVENT) {
 		ts_event->event_type = EVENT_REQUEST;
@@ -1326,6 +1483,14 @@ static int brl_event_handler(struct goodix_ts_core *cd,
 		memcpy(ts_event->gesture_data, &pre_buf[8],
 				GOODIX_GESTURE_DATA_LEN);
 	}
+
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+	if (large_touch_status & GOODIX_LRAGETOUCH_EVENT)
+		update_palm_sensor_value(1);
+	else
+		update_palm_sensor_value(0);
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
+
 	/* read done */
 	hw_ops->after_event_handler(cd);
 
@@ -1553,6 +1718,138 @@ exit:
 	return ret;
 }
 
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 start */
+#define GOODIX_CHARGER_CMD	0xAF
+static int brl_charger_on(struct goodix_ts_core *cd, bool on)
+{
+	struct goodix_ts_cmd cmd;
+	if (cd->work_status == TP_SLEEP) {
+		ts_info("Unsupported send charger cmd in sleep mode, ");
+		return 0;
+	}
+	cmd.cmd = GOODIX_CHARGER_CMD;
+	cmd.len = 5;
+	cmd.data[0] = (on == true) ? 1 : 0;
+	/* ts_info("gesture data :%*ph", 8, cmd.buf); */
+	if (cd->hw_ops->send_cmd(cd, &cmd)) {
+		ts_err("failed send charger cmd, on = %d", on);
+		return -EINVAL;
+	}
+	ts_info("charger mode %s", (on == true) ? "on" : "off");
+	return 0;
+}
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 end */
+
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+#define GOODIX_PALM_CMD		0x70
+static int brl_palm_on(struct goodix_ts_core *cd, bool on)
+{
+	struct goodix_ts_cmd cmd;
+
+	cmd.cmd = GOODIX_PALM_CMD;
+	cmd.len = 6;
+	cmd.data[0] = (on == true) ? 1 : 0;
+	/* ts_info("gesture data :%*ph", 8, cmd.buf); */
+	if (cd->hw_ops->send_cmd(cd, &cmd)) {
+		ts_err("failed send palm cmd, on = %d", on);
+		return -EINVAL;
+	}
+	ts_info("palm mode %s", (on == true) ? "on" : "off");
+
+	return 0;
+}
+
+#define GOODIX_GAME_CMD		0x17
+#define GOODIX_NORMAL_CMD		0x18
+static int brl_game(struct goodix_ts_core *cd, u8 data0, u8 data1, bool on)
+{
+	struct goodix_ts_cmd cmd;
+
+	cmd.len = 6;
+	cmd.data[0] = data0;
+	cmd.data[1] = data1;
+
+	if (on)
+		cmd.cmd = GOODIX_GAME_CMD;
+	else {
+		cmd.cmd = GOODIX_NORMAL_CMD;
+		if ((cmd.data[0] >> 6) == 0x00) {
+			cmd.data[1] = 0x80;
+		} else {
+			cmd.data[1] = 0x80;
+		}
+	}
+	if (cd->hw_ops->send_cmd(cd, &cmd)) {
+		ts_err("failed send game cmd, data0 = 0x%x, data1 = 0x%x, on = %d", cmd.data[0], cmd.data[1], on);
+		return -EINVAL;
+	}
+	ts_info("game data0:0x%x, data1:0x%x, game mode %s", cmd.data[0], cmd.data[1], (on == true) ? "on" : "off");
+	return 0;
+}
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
+
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 start */
+static int brl_edge_mode_set(struct goodix_ts_core *cd, u8 data0, u8 data1, int value)
+{
+	struct goodix_ts_cmd cmd;
+
+	if (!cd) {
+		ts_err("cd is NULL\n");
+		return -EINVAL;
+	}
+
+	memset(&cmd, 0, sizeof(struct goodix_ts_cmd));
+	cmd.cmd = GOODIX_NORMAL_CMD;
+	cmd.len = 6;
+	cmd.data[0] = data0;
+	cmd.data[1] = data1;
+
+	if (value == NORMAL_ORIENTATION_270)
+	{
+		cmd.data[0] = 0x80;
+		cmd.data[1] = 0x80;
+	} else if(value == NORMAL_ORIENTATION_90)
+	{
+		cmd.data[0] = 0x40;
+		cmd.data[1] = 0x80;
+	} else {
+		cmd.data[0] = 0x00;
+		cmd.data[1] = 0x80;
+	}
+	if (cd->hw_ops->send_cmd(cd, &cmd)) {
+		ts_err("failed send edge cmd, data0 = 0x%x, data1 = 0x%x", cmd.data[0], cmd.data[1]);
+		return -EINVAL;
+	}
+	ts_info("edge data0:0x%x, data1:0x%x", cmd.data[0], cmd.data[1]);
+	return 0;
+}
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 end */
+
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 start */
+static int brl_hdle_mode_set(struct goodix_ts_core *cd, bool value)
+{
+        struct goodix_ts_cmd cmd;
+
+	if (!cd) {
+		ts_err("cd is NULL\n");
+		return -EINVAL;
+	}
+
+	memset(&cmd, 0, sizeof(struct goodix_ts_cmd));
+        cmd.cmd = GOODIX_HDLE_MODE_CMD;
+        cmd.len = 5;
+        cmd.data[0] = value ? 1 : 0;
+
+        if (cd->hw_ops->send_cmd(cd, &cmd)) {
+                ts_err("failed send hdle mode cmd, value = %d", value);
+                return -EINVAL;
+        }
+        ts_info("hdle mode %s", value ? "on" : "off");
+
+        return 0;
+}
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 end */
+
 static struct goodix_ts_hw_ops brl_hw_ops = {
 	.power_on = brl_power_on,
 	.resume = brl_resume,
@@ -1572,6 +1869,19 @@ static struct goodix_ts_hw_ops brl_hw_ops = {
 	.event_handler = brl_event_handler,
 	.after_event_handler = brl_after_event_handler,
 	.get_capacitance_data = brl_get_capacitance_data,
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 start */
+	.charger_on = brl_charger_on,
+/* N17 code for HQ-290598 by jiangyue at 2023/6/6 end */
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 start */
+	.palm_on = brl_palm_on,
+	.game = brl_game,
+/* N17 code for HQ-296762 by jiangyue at 2023/6/2 end */
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 start */
+	.edge_mode_set = brl_edge_mode_set,
+/* N17 code for HQ-307700 by p-xionglei6 at 2023.07.24 end */
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 start */
+	.hdle_mode_set = brl_hdle_mode_set,
+/* N17 code for HQ-310258 by zhangzhijian5 at 2023/7/29 end */
 };
 
 struct goodix_ts_hw_ops *goodix_get_hw_ops(void)

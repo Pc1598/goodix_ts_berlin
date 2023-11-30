@@ -202,6 +202,7 @@ static int goodix_spi_probe(struct spi_device *spi)
 	ts_info("spi_info: speed[%d] mode[%d] bits_per_word[%d]",
 			spi->max_speed_hz, spi->mode, spi->bits_per_word);
 	ret = spi_setup(spi);
+
 	if (ret) {
 		ts_err("failed set spi mode, %d", ret);
 		return ret;
@@ -211,7 +212,6 @@ static int goodix_spi_probe(struct spi_device *spi)
 	ret = goodix_get_ic_type(spi->dev.of_node, &goodix_spi_bus);
 	if (ret < 0)
 		return ret;
-
 	goodix_spi_bus.bus_type = GOODIX_BUS_TYPE_SPI;
 	goodix_spi_bus.dev = &spi->dev;
 	if (goodix_spi_bus.ic_type == IC_TYPE_BERLIN_A)
@@ -239,6 +239,7 @@ static int goodix_spi_probe(struct spi_device *spi)
 	 * module will probe the touch deivce.
 	 */
 	ret = platform_device_register(goodix_pdev);
+
 	if (ret) {
 		ts_err("failed register goodix platform device, %d", ret);
 		goto err_pdev;
@@ -261,10 +262,10 @@ static int goodix_spi_remove(struct spi_device *spi)
 
 #ifdef CONFIG_OF
 static const struct of_device_id spi_matchs[] = {
-	{.compatible = "goodix,brl-a",},
+	/*{.compatible = "goodix,brl-a",},
 	{.compatible = "goodix,brl-b",},
-	{.compatible = "goodix,brl-d",},
-	{.compatible = "goodix,nottingham",},
+	{.compatible = "goodix,brl-d",},*/
+	{.compatible = "goodix,9916r-spi",},
 	{},
 };
 #endif

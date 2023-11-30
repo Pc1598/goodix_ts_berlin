@@ -121,6 +121,81 @@ u32 goodix_get_file_config_id(u8 *ic_config)
 	return le32_to_cpup((__le32 *)&ic_config[CONFIG_ID_OFFSET]);
 }
 
+void print_ic_info(struct goodix_ic_info *ic_info)
+{
+	struct goodix_ic_info_version *version = &ic_info->version;
+	struct goodix_ic_info_feature *feature = &ic_info->feature;
+	struct goodix_ic_info_param *parm = &ic_info->parm;
+	struct goodix_ic_info_misc *misc = &ic_info->misc;
+	struct goodix_ic_info_other *other = &ic_info->other;
+
+	ts_info("ic_info_length:                %d",
+		ic_info->length);
+	ts_info("info_customer_id:              0x%01X",
+		version->info_customer_id);
+	ts_info("info_version_id:               0x%01X",
+		version->info_version_id);
+	ts_info("ic_die_id:                     0x%01X",
+		version->ic_die_id);
+	ts_info("ic_version_id:                 0x%01X",
+		version->ic_version_id);
+	ts_info("config_id:                     0x%4X",
+		version->config_id);
+	ts_info("config_version:                0x%01X",
+		version->config_version);
+	ts_info("frame_data_customer_id:        0x%01X",
+		version->frame_data_customer_id);
+	ts_info("frame_data_version_id:         0x%01X",
+		version->frame_data_version_id);
+	ts_info("touch_data_customer_id:        0x%01X",
+		version->touch_data_customer_id);
+	ts_info("touch_data_version_id:         0x%01X",
+		version->touch_data_version_id);
+
+	ts_info("freqhop_feature:               0x%04X",
+		feature->freqhop_feature);
+	ts_info("calibration_feature:           0x%04X",
+		feature->calibration_feature);
+	ts_info("gesture_feature:               0x%04X",
+		feature->gesture_feature);
+	ts_info("side_touch_feature:            0x%04X",
+		feature->side_touch_feature);
+	ts_info("stylus_feature:                0x%04X",
+		feature->stylus_feature);
+
+	ts_info("Drv*Sen,Button,Force num:      %d * %d, %d, %d",
+		parm->drv_num, parm->sen_num,
+		parm->button_num, parm->force_num);
+
+	ts_info("screen_max_x * screen_max_y:   %d * %d",
+		other->screen_max_x, other->screen_max_y);
+
+	ts_info("Cmd:                           0x%04X, %d",
+		misc->cmd_addr, misc->cmd_max_len);
+	ts_info("Cmd-Reply:                     0x%04X, %d",
+		misc->cmd_reply_addr, misc->cmd_reply_len);
+	ts_info("FW-State:                      0x%04X, %d",
+		misc->fw_state_addr, misc->fw_state_len);
+	ts_info("FW-Buffer:                     0x%04X, %d",
+		misc->fw_buffer_addr, misc->fw_buffer_max_len);
+	ts_info("Touch-Data:                    0x%04X, %d",
+		misc->touch_data_addr, misc->touch_data_head_len);
+	ts_info("point_struct_len:              %d",
+		misc->point_struct_len);
+	ts_info("mutual_rawdata_addr:           0x%04X",
+		misc->mutual_rawdata_addr);
+	ts_info("mutual_diffdata_addr:          0x%04X",
+		misc->mutual_diffdata_addr);
+	ts_info("self_rawdata_addr:             0x%04X",
+		misc->self_rawdata_addr);
+	ts_info("self_diffdata_addr:            0x%04X",
+		misc->self_diffdata_addr);
+	ts_info("stylus_rawdata_addr:           0x%04X, %d",
+		misc->stylus_rawdata_addr, misc->stylus_rawdata_len);
+	ts_info("esd_addr:                      0x%04X",
+		misc->esd_addr);
+}
+
 /* matrix transpose */
 void goodix_rotate_abcd2cbad(int tx, int rx, s16 *data)
 {
@@ -161,7 +236,7 @@ int goodix_get_ic_type(struct device_node *node,
 		ts_err("invalid compatible property");
 		return -EINVAL;
 	}
-
+	ts_info("prop %s", prop);
 	memcpy(ic_name, prop->value, prop->length);
 
 	/* replace string end flag with ';' */
@@ -177,7 +252,7 @@ int goodix_get_ic_type(struct device_node *node,
 		return 0;
 	}
 
-	if (strstr(ic_name, "brl-b")) {
+	if (strstr(ic_name, "bl-b")) {
 		ts_info("ic type is brl-b");
 		bus_inf->ic_type = IC_TYPE_BERLIN_B;
 		if (strstr(ic_name, "ga687x")) {
@@ -186,8 +261,8 @@ int goodix_get_ic_type(struct device_node *node,
 		}
 		return 0;
 	}
-	if (strstr(ic_name, "brl-d")) {
-		ts_info("ic type is brl-d");
+	if (strstr(ic_name, "goodix,9916r-spi")) {
+		ts_info("ic type is 9916r-spi");
 		bus_inf->ic_type = IC_TYPE_BERLIN_D;
 		return 0;
 	}
@@ -196,7 +271,7 @@ int goodix_get_ic_type(struct device_node *node,
 		bus_inf->ic_type = IC_TYPE_NOTTINGHAM;
 		return 0;
 	}
-	
+
 	ts_err("unsupported ic type %s", ic_name);
 	return -EINVAL;
 }
