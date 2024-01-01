@@ -1,19 +1,22 @@
- /*
-  * Goodix Touchscreen Driver
-  * Copyright (C) 2020 - 2021 Goodix, Inc.
-  *
-  * This program is free software; you can redistribute it and/or modify
-  * it under the terms of the GNU General Public License as published by
-  * the Free Software Foundation; either version 2 of the License, or
-  * (at your option) any later version.
-  *
-  * This program is distributed in the hope that it will be a reference
-  * to you, when you are integrating the GOODiX's CTP IC into your system,
-  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-  * General Public License for more details.
-  *
-  */
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Goodix Touchscreen Driver
+ * Copyright (C) 2020 - 2021 Goodix, Inc.
+ *
+ * Copyright (C) 2022 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be a reference
+ * to you, when you are integrating the GOODiX's CTP IC into your system,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ */
 #include "goodix_ts_core.h"
 
 #define BUS_TYPE_SPI					1
@@ -387,6 +390,7 @@ static int goodix_parse_firmware(struct firmware_data *fw_data)
 		fw_offset += fw_summary->subsys[i].size;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_GOODIX_BRL_DEBUG
 	ts_info("Firmware package protocol: V%u", fw_summary->protocol_ver);
 	ts_info("Firmware PID:GT%s", fw_summary->fw_pid);
 	ts_info("Firmware VID:%*ph", 4, fw_summary->fw_vid);
@@ -405,6 +409,7 @@ static int goodix_parse_firmware(struct firmware_data *fw_data)
 				fw_summary->subsys[i].flash_addr);
 		ts_debug("Subsystem Ptr:%p", fw_summary->subsys[i].data);
 	}
+#endif
 
 	if (fw_summary->chip_type == CHIP_TYPE_BRA &&
 		ic_type != IC_TYPE_BERLIN_A) {
@@ -720,8 +725,7 @@ static int goodix_send_flash_cmd(struct goodix_flash_cmd *flash_cmd)
 			return 0;
 		}
 
-		ts_info("flash cmd status not ready, retry %d, ack 0x%x, status 0x%x, ret %d",
-			i, tmp_cmd.ack, tmp_cmd.status, ret);
+		ts_info("flash cmd status not ready, retry %d, ack 0x%x, status 0x%x, ret %d", i, tmp_cmd.ack, tmp_cmd.status, ret);
 		msleep(20);
 	}
 
@@ -946,8 +950,8 @@ int goodix_fw_update_proc(struct fw_update_ctrl *fwu_ctrl)
 		if (!ret) {
 			ts_info("firmware upgraded");
 			return 0;
-		} else
-			ts_info("need to upgrade");
+		}
+		ts_info("need to upgrade");
 	}
 
 start_update:
@@ -1145,15 +1149,14 @@ static ssize_t goodix_sysfs_result_show(
 	return r;
 }
 
-static DEVICE_ATTR(update_en, 0220, NULL, goodix_sysfs_update_en_store);
-static DEVICE_ATTR(fwsize, 0664, goodix_sysfs_fwsize_show,
-		goodix_sysfs_fwsize_store);
-static DEVICE_ATTR(result, 0664, goodix_sysfs_result_show, NULL);
+static DEVICE_ATTR_WO(goodix_sysfs_update_en);
+static DEVICE_ATTR_RW(goodix_sysfs_fwsize);
+static DEVICE_ATTR_RO(goodix_sysfs_result);
 
 static struct attribute *goodix_fwu_attrs[] = {
-	&dev_attr_update_en.attr,
-	&dev_attr_fwsize.attr,
-	&dev_attr_result.attr
+	&dev_attr_goodix_sysfs_update_en.attr,
+	&dev_attr_goodix_sysfs_fwsize.attr,
+	&dev_attr_goodix_sysfs_result.attr,
 };
 
 static int goodix_fw_sysfs_init(struct goodix_ts_core *core_data,

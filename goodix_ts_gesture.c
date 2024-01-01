@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Goodix Gesture Module
  *
  * Copyright (C) 2019 - 2020 Goodix, Inc.
+ *
+ * Copyright (C) 2022 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,11 +28,17 @@
 #include <linux/version.h>
 #include <linux/delay.h>
 #include <linux/atomic.h>
+#include <linux/input/mt.h>
 #include "goodix_ts_core.h"
 
 #define QUERYBIT(longlong, bit) (!!(longlong[bit/8] & (1 << bit%8)))
 
 #define GSX_GESTURE_TYPE_LEN	32
+#define TYPE_B_PROTOCOL
+
+static int  FP_Event_Gesture;
+
+
 
 /*
  * struct gesture_module - gesture module data
@@ -56,8 +65,9 @@ int goodix_gesture_enable(int enable)
 	int ret = 0;
 
 	if (!module_initialized)
-		return 0;		
+		return 0;
 
+	ts_info("enable is %d", enable);
 	if (enable) {
 		if (atomic_read(&gsx_gesture->registered))
 			ts_info("gesture module has been already registered");
@@ -151,10 +161,9 @@ static ssize_t gsx_gesture_enable_store(struct goodix_ext_module *module,
 	if (val) {
 		ret = goodix_gesture_enable(1);
 		return ret ? ret : count;
-	} else {
-		ret = goodix_gesture_enable(0);
-		return ret ? ret : count;
 	}
+	ret = goodix_gesture_enable(0);
+	return ret ? ret : count;
 }
 
 static ssize_t gsx_gesture_data_show(struct goodix_ext_module *module,
@@ -207,7 +216,7 @@ static int gsx_gesture_exit(struct goodix_ts_core *cd,
 	ts_debug("disable all gesture type");
 	memset(gsx_gesture->gesture_type, 0x00, GSX_GESTURE_TYPE_LEN);
 	atomic_set(&gsx_gesture->registered, 0);
-	
+
 	return 0;
 }
 
@@ -226,33 +235,102 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 	struct goodix_ts_hw_ops *hw_ops = cd->hw_ops;
 	struct goodix_ts_event gs_event = {0};
 	int ret;
+	int key_value;
+	unsigned int fodx, fody, fod_id;
+	unsigned int overlay_area;
+	u8 gesture_data[32];
 
 	if (atomic_read(&cd->suspended) == 0)
 		return EVT_CONTINUE;
+
+	mutex_lock(&cd->report_mutex);
 
 	ret = hw_ops->event_handler(cd, &gs_event);
 	if (ret) {
 		ts_err("failed get gesture data");
 		goto re_send_ges_cmd;
 	}
-	
+
 	if (!(gs_event.event_type & EVENT_GESTURE)) {
 		ts_err("invalid event type: 0x%x",
 			cd->ts_event.event_type);
 		goto re_send_ges_cmd;
 	}
 
-	if (QUERYBIT(gsx_gesture->gesture_type,
-		     gs_event.gesture_type)) {
+	memcpy(gesture_data, gs_event.touch_data.tmp_data, 32*sizeof(u8));
+	if ((gesture_data[0] & 0x08)  != 0)
+		FP_Event_Gesture = 1;
+
+	fod_id = gesture_data[17];
+	if (cd->fod_status && (FP_Event_Gesture == 1) &&
+		(gs_event.gesture_type == 0x46) &&
+		(cd->nonui_status != 2)) {
+		fodx = gesture_data[8] | (gesture_data[9] << 8);
+		fody = gesture_data[10] | (gesture_data[11] << 8);
+		overlay_area = gesture_data[12];
+		ts_info("gesture coordinate fodx:0x%x, fody:0x%x, overlay_area:0x%x",
+			    fodx, fody, overlay_area);
+		ts_info("fod down");
+			input_report_key(cd->input_dev, BTN_INFO, 1);
+			input_sync(cd->input_dev);
+#ifdef TYPE_B_PROTOCOL
+			input_mt_slot(cd->input_dev, fod_id);
+			ts_info("fod id:%d", fod_id);
+			input_mt_report_slot_state(cd->input_dev,
+					MT_TOOL_FINGER, 1);
+#endif
+			input_report_key(cd->input_dev, BTN_TOUCH, 1);
+			input_report_key(cd->input_dev, BTN_TOOL_FINGER, 1);
+			input_report_abs(cd->input_dev, ABS_MT_POSITION_X, fodx);
+			input_report_abs(cd->input_dev, ABS_MT_POSITION_Y, fody);
+			input_report_abs(cd->input_dev, ABS_MT_WIDTH_MAJOR, overlay_area);
+			input_report_abs(cd->input_dev, ABS_MT_WIDTH_MINOR, overlay_area);
+			input_sync(cd->input_dev);
+			/* mi_disp_set_fod_queue_work(1, true); */
+			cd->fod_finger = true;
+			FP_Event_Gesture = 0;
+			goto re_send_ges_cmd;
+	}
+	if  ((FP_Event_Gesture == 1) && (gs_event.gesture_type == 0x55)) {
+		if (cd->fod_finger) {
+			ts_info("fod finger is %d", cd->fod_finger);
+			ts_info("fod up");
+			cd->fod_finger = false;
+			input_report_key(cd->input_dev, BTN_INFO, 0);
+			input_report_abs(cd->input_dev, ABS_MT_WIDTH_MAJOR, 0);
+			input_report_abs(cd->input_dev, ABS_MT_WIDTH_MINOR, 0);
+			input_sync(cd->input_dev);
+#ifdef TYPE_B_PROTOCOL
+			input_mt_slot(cd->input_dev, fod_id);
+			ts_info("fod id:%d", fod_id);
+			input_mt_report_slot_state(cd->input_dev,
+					MT_TOOL_FINGER, 0);
+#endif
+			input_report_key(cd->input_dev, BTN_TOUCH, 0);
+			input_report_key(cd->input_dev, BTN_TOOL_FINGER, 0);
+			input_sync(cd->input_dev);
+		}
+		goto re_send_ges_cmd;
+	}
+	if (QUERYBIT(gsx_gesture->gesture_type, gs_event.gesture_type)) {
 		gsx_gesture->gesture_data = gs_event.gesture_type;
 		/* do resume routine */
-		ts_info("got valid gesture type 0x%x",
-			gs_event.gesture_type);
-		input_report_key(cd->input_dev, KEY_POWER, 1);
+		ts_info("GTP got valid gesture type 0x%x", gs_event.gesture_type);
+		if (cd->double_wakeup && gs_event.gesture_type == 0xcc) {
+			ts_info("GTP gesture report double tap");
+			key_value = KEY_WAKEUP;
+		}
+		if ((cd->fod_icon_status || cd->aod_status) &&
+				cd->nonui_status == 0 &&
+				gs_event.gesture_type == 0x4c) {
+			ts_info("GTP gesture report single tap");
+			key_value = KEY_GOTO;
+		}
+		input_report_key(cd->input_dev, key_value, 1);
 		input_sync(cd->input_dev);
-		input_report_key(cd->input_dev, KEY_POWER, 0);
+		input_report_key(cd->input_dev, key_value, 0);
 		input_sync(cd->input_dev);
-		goto gesture_ist_exit;
+		goto re_send_ges_cmd;
 	} else {
 		ts_info("unsupported gesture:%x", gs_event.gesture_type);
 	}
@@ -260,9 +338,11 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 re_send_ges_cmd:
 	if (hw_ops->gesture(cd, 0))
 		ts_info("warning: failed re_send gesture cmd");
-gesture_ist_exit:
 	if (!cd->tools_ctrl_sync)
 		hw_ops->after_event_handler(cd);
+
+	mutex_unlock(&cd->report_mutex);
+
 	return EVT_CANCEL_IRQEVT;
 }
 
@@ -280,7 +360,7 @@ static int gsx_gesture_before_suspend(struct goodix_ts_core *cd,
 	int ret;
 	const struct goodix_ts_hw_ops *hw_ops = cd->hw_ops;
 
-	ret = hw_ops->gesture(cd, 0);
+	ret = hw_ops->gesture(cd, cd->gesture_enabled);
 	if (ret)
 		ts_err("failed enter gesture mode");
 	else

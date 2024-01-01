@@ -1,19 +1,22 @@
- /*
-  * Goodix Touchscreen Driver
-  * Copyright (C) 2020 - 2021 Goodix, Inc.
-  *
-  * This program is free software; you can redistribute it and/or modify
-  * it under the terms of the GNU General Public License as published by
-  * the Free Software Foundation; either version 2 of the License, or
-  * (at your option) any later version.
-  *
-  * This program is distributed in the hope that it will be a reference
-  * to you, when you are integrating the GOODiX's CTP IC into your system,
-  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-  * General Public License for more details.
-  *
-  */
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Goodix Touchscreen Driver
+ * Copyright (C) 2020 - 2021 Goodix, Inc.
+ *
+ * Copyright (C) 2022 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be a reference
+ * to you, when you are integrating the GOODiX's CTP IC into your system,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ */
 #include "goodix_ts_core.h"
 
 #define TS_BIN_VERSION_START_INDEX		5
@@ -34,9 +37,9 @@
 #define TS_CFG_BLOCK_FW_PATCH_LEN	4
 #define TS_CFG_BLOCK_RESERVED_LEN	9
 
-#define TS_NORMAL_CFG 				0x01
-#define TS_HIGH_SENSE_CFG 			0x03
-#define TS_RQST_FW_RETRY_TIMES 		2
+#define TS_NORMAL_CFG				0x01
+#define TS_HIGH_SENSE_CFG			0x03
+#define TS_RQST_FW_RETRY_TIMES		2
 
 #pragma pack(1)
 struct goodix_cfg_pkg_reg {
@@ -100,7 +103,7 @@ struct goodix_cfg_bin {
 	struct goodix_cfg_package *cfg_pkgs;
 };
 
-static int goodix_read_cfg_bin(struct device *dev, const char *cfg_name, 
+static int goodix_read_cfg_bin(struct device *dev, const char *cfg_name,
 			struct goodix_cfg_bin *cfg_bin)
 {
 	const struct firmware *firmware = NULL;
@@ -167,9 +170,8 @@ static int goodix_parse_cfg_bin(struct goodix_cfg_bin *cfg_bin)
 
 	/*check cfg_bin valid*/
 	checksum = 0;
-	for (i = TS_BIN_VERSION_START_INDEX; i < cfg_bin->bin_data_len; i++) {
+	for (i = TS_BIN_VERSION_START_INDEX; i < cfg_bin->bin_data_len; i++)
 		checksum += cfg_bin->bin_data[i];
-	}
 	if (checksum != cfg_bin->head.checksum) {
 		ts_err("cfg_bin checksum check filed 0x%02x != 0x%02x",
 		       cfg_bin->head.checksum, checksum);
@@ -179,10 +181,8 @@ static int goodix_parse_cfg_bin(struct goodix_cfg_bin *cfg_bin)
 	/*allocate memory for cfg packages*/
 	cfg_bin->cfg_pkgs = kzalloc(sizeof(struct goodix_cfg_package) *
 				    cfg_bin->head.pkg_num, GFP_KERNEL);
-	if (!cfg_bin->cfg_pkgs) {
-		ts_err("cfg_pkgs, allocate memory ERROR");
+	if (!cfg_bin->cfg_pkgs)
 		return -ENOMEM;
-	}
 
 	/*get cfg_pkg's info*/
 	for (i = 0; i < cfg_bin->head.pkg_num; i++) {
@@ -281,8 +281,7 @@ static int goodix_get_reg_and_cfg(struct goodix_ts_core *cd, u8 sensor_id,
 err_out:
 	/* parse config enter error, release memory alloced */
 	for (i = 0; i < GOODIX_MAX_CONFIG_GROUP; i++) {
-		if (cd->ic_configs[i])
-			kfree(cd->ic_configs[i]);
+		kfree(cd->ic_configs[i]);
 		cd->ic_configs[i] = NULL;
 	}
 	return -EINVAL;
@@ -323,6 +322,11 @@ err_out:
 
 int goodix_get_config_proc(struct goodix_ts_core *cd)
 {
+	if (cd->hw_ops->read_version(cd, &cd->fw_version)) {
+		ts_info("version info abnormal, abort");
+		return -EINVAL;
+	}
+
 	return goodix_get_config_data(cd, cd->fw_version.sensor_id);
 }
 

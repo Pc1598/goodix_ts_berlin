@@ -1,38 +1,41 @@
- /*
-  * Goodix Touchscreen Driver
-  * Copyright (C) 2020 - 2021 Goodix, Inc.
-  *
-  * This program is free software; you can redistribute it and/or modify
-  * it under the terms of the GNU General Public License as published by
-  * the Free Software Foundation; either version 2 of the License, or
-  * (at your option) any later version.
-  *
-  * This program is distributed in the hope that it will be a reference
-  * to you, when you are integrating the GOODiX's CTP IC into your system,
-  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-  * General Public License for more details.
-  *
-  */
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Goodix Touchscreen Driver
+ * Copyright (C) 2020 - 2021 Goodix, Inc.
+ *
+ * Copyright (C) 2022 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be a reference
+ * to you, when you are integrating the GOODiX's CTP IC into your system,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ */
 #include "goodix_ts_core.h"
 
-bool debug_log_flag = false;
+bool debug_log_flag;
 
 /*****************************************************************************
-* goodix_append_checksum
-* @summary
-*    Calcualte data checksum with the specified mode.
-*
-* @param data
-*   data need to be calculate
-* @param len
-*   data length
-* @param mode
-*   calculate for u8 or u16 checksum
-* @return
-*   return the data checksum value.
-*
-*****************************************************************************/
+ * goodix_append_checksum
+ * @summary
+ *    Calcualte data checksum with the specified mode.
+ *
+ * @param data
+ *   data need to be calculate
+ * @param len
+ *   data length
+ * @param mode
+ *   calculate for u8 or u16 checksum
+ * @return
+ *   return the data checksum value.
+ *
+ *****************************************************************************/
 u32 goodix_append_checksum(u8 *data, int len, int mode)
 {
 	u32 checksum = 0;
@@ -43,7 +46,7 @@ u32 goodix_append_checksum(u8 *data, int len, int mode)
 		for (i = 0; i < len; i++)
 			checksum += data[i];
 	} else {
-		for (i = 0; i < len; i+=2)
+		for (i = 0; i < len; i += 2)
 			checksum += (data[i] + (data[i+1] << 8));
 	}
 
@@ -63,7 +66,7 @@ u32 goodix_append_checksum(u8 *data, int len, int mode)
  * @data: data need to be check
  * @size: data length need to be check(include the checksum bytes)
  * @mode: compare with U8 or U16 mode
- * */
+ */
 int checksum_cmp(const u8 *data, int size, int mode)
 {
 	u32 cal_checksum = 0;
@@ -105,7 +108,7 @@ int is_risk_data(const u8 *data, int size)
 			ff_count++;
 	}
 	if (zero_count == size || ff_count == size) {
-		ts_info("warning data is all %s\n",
+		ts_info("warning data is all %s",
 			zero_count == size ? "zero" : "0xff");
 		return 1;
 	}
@@ -114,7 +117,7 @@ int is_risk_data(const u8 *data, int size)
 }
 
 /* get config id form config file */
-#define CONFIG_ID_OFFSET 		30
+#define CONFIG_ID_OFFSET		30
 u32 goodix_get_file_config_id(u8 *ic_config)
 {
 	if (!ic_config)
@@ -132,10 +135,8 @@ void goodix_rotate_abcd2cbad(int tx, int rx, s16 *data)
 	int col;
 
 	temp_buf = kcalloc(size, sizeof(s16), GFP_KERNEL);
-	if (!temp_buf) {
-		ts_err("malloc failed");
+	if (!temp_buf)
 		return;
-	}
 
 	for (i = 0, j = 0, col = 0; i < size; i++) {
 		temp_buf[i] = data[j++ * rx + col];
@@ -167,7 +168,7 @@ int goodix_get_ic_type(struct device_node *node)
 	} else if (strstr(name_tmp, "9966") || strstr(name_tmp, "7986")) {
 		ts_info("ic type is BerlinB");
 		ret = IC_TYPE_BERLIN_B;
-	} else if (strstr(name_tmp, "9916")) {
+	} else if (strstr(name_tmp, "9916") || strstr(name_tmp, "spi")) {
 		ts_info("ic type is BerlinD");
 		ret = IC_TYPE_BERLIN_D;
 	} else {

@@ -1,23 +1,30 @@
- /*
-  * Goodix Touchscreen Driver
-  * Copyright (C) 2020 - 2021 Goodix, Inc.
-  *
-  * This program is free software; you can redistribute it and/or modify
-  * it under the terms of the GNU General Public License as published by
-  * the Free Software Foundation; either version 2 of the License, or
-  * (at your option) any later version.
-  *
-  * This program is distributed in the hope that it will be a reference
-  * to you, when you are integrating the GOODiX's CTP IC into your system,
-  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-  * General Public License for more details.
-  *
-  */
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Goodix Touchscreen Driver
+ * Copyright (C) 2020 - 2021 Goodix, Inc.
+ *
+ * Copyright (C) 2022 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be a reference
+ * to you, when you are integrating the GOODiX's CTP IC into your system,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ */
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/spi/spi.h>
-
+#include <drm/drm_panel.h>
+#include <linux/list.h>
+#include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/err.h>
 #include "goodix_ts_core.h"
 #define TS_DRIVER_NAME		"gtx8_spi"
 
@@ -32,8 +39,8 @@
 
 static struct platform_device *goodix_pdev;
 struct goodix_bus_interface goodix_spi_bus;
-
-/**
+struct device *global_spi_parent_device;
+/*
  * goodix_spi_read_bra- read device register through spi bus
  * @dev: pointer to device data
  * @addr: register address
@@ -80,7 +87,7 @@ static int goodix_spi_read_bra(struct device *dev, unsigned int addr,
 	spi_message_add_tail(&xfers, &spi_msg);
 	ret = spi_sync(spi, &spi_msg);
 	if (ret < 0) {
-		ts_err("spi transfer error:%d",ret);
+		ts_err("spi transfer error:%d", ret);
 		goto exit;
 	}
 	memcpy(data, &rx_buf[SPI_READ_PREFIX_LEN], len);
@@ -129,7 +136,7 @@ static int goodix_spi_read(struct device *dev, unsigned int addr,
 	spi_message_add_tail(&xfers, &spi_msg);
 	ret = spi_sync(spi, &spi_msg);
 	if (ret < 0) {
-		ts_err("spi transfer error:%d",ret);
+		ts_err("spi transfer error:%d", ret);
 		goto exit;
 	}
 	memcpy(data, &rx_buf[SPI_READ_PREFIX_LEN - 1], len);
@@ -158,11 +165,8 @@ static int goodix_spi_write(struct device *dev, unsigned int addr,
 	int ret = 0;
 
 	tx_buf = kzalloc(SPI_WRITE_PREFIX_LEN + len, GFP_KERNEL);
-	if (!tx_buf) {
-		ts_err("alloc tx_buf failed, size:%d",
-			SPI_WRITE_PREFIX_LEN + len);
+	if (!tx_buf)
 		return -ENOMEM;
-	}
 
 	spi_message_init(&spi_msg);
 	memset(&xfers, 0, sizeof(xfers));
@@ -179,7 +183,7 @@ static int goodix_spi_write(struct device *dev, unsigned int addr,
 	spi_message_add_tail(&xfers, &spi_msg);
 	ret = spi_sync(spi, &spi_msg);
 	if (ret < 0)
-		ts_err("spi transfer error:%d",ret);
+		ts_err("spi transfer error:%d", ret);
 
 	kfree(tx_buf);
 	return ret;
@@ -198,8 +202,8 @@ static int goodix_spi_probe(struct spi_device *spi)
 	ts_info("goodix spi probe in");
 
 	/* init spi_device */
-	spi->mode            = SPI_MODE_0;
-	spi->bits_per_word   = 8;
+	spi->mode = SPI_MODE_0;
+	spi->bits_per_word = 8;
 
 	ret = spi_setup(spi);
 	if (ret) {
@@ -220,6 +224,7 @@ static int goodix_spi_probe(struct spi_device *spi)
 	else
 		goodix_spi_bus.read = goodix_spi_read;
 	goodix_spi_bus.write = goodix_spi_write;
+	global_spi_parent_device = spi->controller->dev.parent;
 	/* ts core device */
 	goodix_pdev = kzalloc(sizeof(struct platform_device), GFP_KERNEL);
 	if (!goodix_pdev)
@@ -230,7 +235,7 @@ static int goodix_spi_probe(struct spi_device *spi)
 	goodix_pdev->num_resources = 0;
 	/*
 	 * you can find this platform dev in
-	 * /sys/devices/platfrom/goodix_ts.0
+	 * /sys/devices/platform/goodix_ts.0
 	 * goodix_pdev->dev.parent = &client->dev;
 	 */
 	goodix_pdev->dev.platform_data = &goodix_spi_bus;
@@ -262,10 +267,7 @@ static int goodix_spi_remove(struct spi_device *spi)
 
 #ifdef CONFIG_OF
 static const struct of_device_id spi_matchs[] = {
-	{.compatible = "goodix,gt9897S",},
-	{.compatible = "goodix,gt9897T",},
-	{.compatible = "goodix,gt9966S",},
-	{.compatible = "goodix,gt9916S",},
+	{.compatible = "goodix,9916r-spi",},
 	{},
 };
 #endif
@@ -278,7 +280,6 @@ static const struct spi_device_id spi_id_table[] = {
 static struct spi_driver goodix_spi_driver = {
 	.driver = {
 		.name = TS_DRIVER_NAME,
-		//.owner = THIS_MODULE,
 		.of_match_table = spi_matchs,
 	},
 	.id_table = spi_id_table,
